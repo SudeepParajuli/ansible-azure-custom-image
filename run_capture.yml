@@ -1,0 +1,31 @@
+- include: capture_image.yml
+  vars:
+    vm_name: MyUbuntuVM 
+    admin_user: devopscle2
+    resource_group_name: RESOURCE_GROUP_NAME
+    subscription_id: SUBSCRIPTION_ID
+    client_id: CLIENT_ID
+    tenant_id: TENANT_ID
+    client_secret: CLIENT_SECRET
+    ssh_public_key: SSH_PUBLIC_KEY
+    destination_account: graphstoryimages
+    destination_container: sourceimages
+    destination_key: DESTINATION_STORAGE_ACCOUNT-KEY
+    destination_blob: capturedimage.vhd
+    wait: False
+    storage_accounts:
+      -
+        account_name: graphstory4
+        key: STORAGE_ACCOUNT_KEY
+        container: storedimages
+        blob: graphstoryneo4j2.vhd
+      -
+        account_name: graphstory5
+        key: STORAGE_ACCOUNT_KEY
+        container: storedimages
+        blob: graphstoryneo4j2.vhd
+      -
+        account_name: graphstory6
+        key: STORAGE_ACCOUNT_KEY
+        container: storedimages
+        blob: graphstoryneo4j2.vhd

@@ -1,0 +1,200 @@
+---
+- name: Capture a VM image and copy it to other storage accounts
+  hosts: 127.0.0.1
+  connection: local
+  remote_user: "{{admin_user}}"
+  tasks:
+    - name: Create Azure VM
+      local_action:
+        module: azure_deploy
+        state: present
+        subscription_id: "{{subscription_id}}"
+        client_id: "{{client_id}}"
+        tenant_or_domain: "{{tenant_id}}"
+        client_secret: "{{client_secret}}" # don't check in!
+        resource_group_name: '{{resource_group_name}}'
+        template:
+          $schema: "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#"
+          contentVersion: "1.0.0.0"
+          parameters:
+            adminUsername:
+              type: "string"
+              metadata:
+                description: "User name for the Virtual Machine."
+            dnsNameForPublicIP:
+              type: "string"
+              metadata:
+                description: "Unique DNS Name for the Public IP used to access the Virtual Machine."
+            ubuntuOSVersion:
+              type: "string"
+              defaultValue: "14.04.2-LTS"
+              allowedValues:
+                - "12.04.5-LTS"
+                - "14.04.2-LTS"
+                - "15.04"
+              metadata:
+                description: "The Ubuntu version for the VM. This will pick a fully patched image of this given Ubuntu version. Allowed values: 12.04.5-LTS, 14.04.2-LTS, 15.04."
+          variables:
+            newStorageAccountName: "[uniqueString(resourceGroup().id)]"
+            location: "West US"
+            imagePublisher: "Canonical"
+            imageOffer: "UbuntuServer"
+            OSDiskName: "osdiskforlinuxsimple"
+            nicName: "myVMNic"
+            addressPrefix: "10.0.0.0/16"
+            subnetName: "Subnet"
+            subnetPrefix: "10.0.0.0/24"
+            storageAccountType: "Standard_LRS"
+            publicIPAddressName: "myPublicIP"
+            publicIPAddressType: "Dynamic"
+            vmStorageAccountContainerName: "vhds"
+            vmName: "{{vm_name}}"
+            vmSize: "Standard_D1"
+            virtualNetworkName: "MyVNET"
+            vnetID: "[resourceId('Microsoft.Network/virtualNetworks',variables('virtualNetworkName'))]"
+            subnetRef: "[concat(variables('vnetID'),'/subnets/',variables('subnetName'))]"
+            sshKeyPath: "[concat('/home/',parameters('adminUsername'),'/.ssh/authorized_keys')]"
+          resources:
+            -
+              type: "Microsoft.Storage/storageAccounts"
+              name: "[uniqueString(resourceGroup().id)]"
+              apiVersion: "2015-05-01-preview"
+              location: "[variables('location')]"
+              properties:
+                accountType: "[variables('storageAccountType')]"
+            -
+              apiVersion: "2015-05-01-preview"
+              type: "Microsoft.Network/publicIPAddresses"
+              name: "[variables('publicIPAddressName')]"
+              location: "[variables('location')]"
+              properties:
+                publicIPAllocationMethod: "[variables('publicIPAddressType')]"
+                dnsSettings:
+                  domainNameLabel: "[parameters('dnsNameForPublicIP')]"
+            -
+              type: "Microsoft.Network/virtualNetworks"
+              apiVersion: "2015-05-01-preview"
+              name: "[variables('virtualNetworkName')]"
+              location: "[variables('location')]"
+              properties:
+                addressSpace:
+                  addressPrefixes:
+                    - "[variables('addressPrefix')]"
+                subnets:
+                  -
+                    name: "[variables('subnetName')]"
+                    properties:
+                      addressPrefix: "[variables('subnetPrefix')]"
+            -
+              type: "Microsoft.Network/networkInterfaces"
+              apiVersion: "2015-05-01-preview"
+              name: "[variables('nicName')]"
+              location: "[variables('location')]"
+              dependsOn:
+                - "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]"
+                - "[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]"
+              properties:
+                ipConfigurations:
+                  -
+                    name: "ipconfig1"
+                    properties:
+                      privateIPAllocationMethod: "Dynamic"
+                      publicIPAddress:
+                        id: "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPAddressName'))]"
+                      subnet:
+                        id: "[variables('subnetRef')]"
+            -
+              type: "Microsoft.Compute/virtualMachines"
+              apiVersion: "2015-06-15"
+              name: "[variables('vmName')]"
+              location: "[variables('location')]"
+              dependsOn:
+                - "[concat('Microsoft.Storage/storageAccounts/', variables('newStorageAccountName'))]"
+                - "[concat('Microsoft.Network/networkInterfaces/', variables('nicName'))]"
+              properties:
+                hardwareProfile:
+                  vmSize: "[variables('vmSize')]"
+                osProfile:
+                  computername: "[variables('vmName')]"
+                  adminUsername: "[parameters('adminUsername')]"
+                  adminPassword: "notused"
+                  linuxConfiguration:
+                    disablePasswordAuthentication: "true"
+                    ssh: 
+                        publicKeys: 
+                          - 
+                            path: "[variables('sshKeyPath')]"
+                            keyData: "{{ssh_public_key}}"
+                storageProfile:
+                  imageReference:
+                    publisher: "[variables('imagePublisher')]"
+                    offer: "[variables('imageOffer')]"
+                    sku: "[parameters('ubuntuOSVersion')]"
+                    version: "latest"
+                  osDisk:
+                    name: "osdisk"
+                    vhd:
+                      uri: "[concat('http://',variables('newStorageAccountName'),'.blob.core.windows.net/',variables('vmStorageAccountContainerName'),'/',variables('OSDiskName'),'.vhd')]"
+                    caching: "ReadWrite"
+                    createOption: "FromImage"
+                networkProfile:
+                  networkInterfaces:
+                    -
+                      id: "[resourceId('Microsoft.Network/networkInterfaces',variables('nicName'))]"
+                diagnosticsProfile:
+                  bootDiagnostics:
+                    enabled: "true"
+                    storageUri: "[concat('http://',variables('newStorageAccountName'),'.blob.core.windows.net')]"
+          outputs:
+            storage_key:
+              type: "object"
+              value: "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('newStorageAccountName')), '2015-05-01-preview')]"
+            storage_name:
+              type: "string"
+              value: "[uniqueString(resourceGroup().id)]"
+        parameters:
+          adminUsername:
+            value: '{{admin_user}}'
+          dnsNameForPublicIP:
+            value: '{{resource_group_name}}'
+      register: azure
+    - name: Add new instance to host group
+      add_host: hostname={{ item['ips'][0].public_ip }} groupname=launched ansible_user={{admin_user}} vm_name={{ item['vm_name'] }}
+      with_items: azure.instances
+    - debug: var=azure
+    - name: Wait for SSH to come up
+      wait_for: host={{ item['ips'][0]['dns_settings']['fqdn'] }} port=22 delay=60 timeout=320 state=started
+      with_items: azure.instances
+- name: Run Deprovision user Command
+  hosts: launched
+  remote_user: "{{admin_user}}"
+  tasks:
+    - name: Deprovision User
+      command: sudo waagent -deprovision+user -force
+- name: Genericize
+  hosts: 127.0.0.1
+  connection: local
+  tasks:
+    - name: Genercize VM
+      local_action:
+        module: azure_image_capture 
+        subscription_id: "{{subscription_id}}"
+        resource_group_name: '{{resource_group_name}}'
+        destination_container: copiedvhds
+        client_id: "{{client_id}}"
+        tenant_id: "{{tenant_id}}"
+        client_secret: "{{client_secret}}" # don't check in!
+        vm_name: "{{vm_name}}"
+        wait: "{{wait}}"
+      register: capture_info
+    - debug: var=capture_info
+    - name: Copy Blob
+      local_action:
+        module: azure_copy_blob
+        source_uri: "{{capture_info.vhd_uri}}"
+        source_key: "{{azure.outputs.storage_key.value.key1}}"
+        destination_account: "{{item.account_name}}"
+        destination_container: "{{item.container}}"
+        destination_key: "{{item.key}}"
+        destination_blob: "{{item.blob}}"
+      with_items: storage_accounts
